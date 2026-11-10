@@ -1,0 +1,186 @@
+name: Android Kernel Builder
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_repo:
+        description: "Kernel source GitHub reposu (ör: https://github.com/kullanici/android_kernel_xxx)"
+        required: true
+        type: string
+      kernel_branch:
+        description: "Kernel branch"
+        required: true
+        default: "main"
+        type: string
+      defconfig:
+        description: "Defconfig (ör: vendor/xxx_defconfig)"
+        required: true
+        type: string
+      localversion:
+        description: "Localversion (ör: -Hawaii)"
+        required: true
+        default: "-Hawaii"
+        type: string
+      ksu:
+        description: "KernelSU çeşidi"
+        required: true
+        default: "KernelSU-Next"
+        type: choice
+        options:
+          - "none"
+          - "KernelSU-Next"        # non-GKI icin (legacy dali), en pratik secenek
+          - "KernelSU-v0.9.5"      # resmi KSU'nun non-GKI destekleyen son surumu
+          - "KernelSU-latest"      # resmi guncel surum, SADECE GKI 2.0 (5.10+)
+      clang_url:
+        description: "Greenforce clang arsiv linki (bos birakirsan son release otomatik bulunur)"
+        required: false
+        default: ""
+        type: string
+      anykernel_repo:
+        description: "AnyKernel3 reposu (opsiyonel, doluysa flashable zip uretir)"
+        required: false
+        default: ""
+        type: string
+      anykernel_branch:
+        description: "AnyKernel3 branch"
+        required: false
+        default: "master"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      KERNEL_REPO: ${{ inputs.kernel_repo }}
+      KERNEL_BRANCH: ${{ inputs.kernel_branch }}
+      DEFCONFIG: ${{ inputs.defconfig }}
+      LOCALVERSION_STR: ${{ inputs.localversion }}
+      KSU_CHOICE: ${{ inputs.ksu }}
+      CLANG_URL: ${{ inputs.clang_url }}
+      AK3_REPO: ${{ inputs.anykernel_repo }}
+      AK3_BRANCH: ${{ inputs.anykernel_branch }}
+      ARCH: arm64
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Disk alani ac
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - name: Bagimliliklari kur
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison flex libssl-dev libelf-dev libncurses-dev \
+            build-essential ccache zip unzip zstd cpio lz4 \
+            python3 curl git jq dwarves \
+            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+
+      - name: Kernel source'u cek
+        run: |
+          git clone --depth=1 -b "$KERNEL_BRANCH" "$KERNEL_REPO" kernel
+          cd kernel
+          echo "Kernel: $(make kernelversion)"
+
+      - name: Greenforce clang indir
+        run: |
+          mkdir -p "$HOME/greenforce-clang"
+          URL="$CLANG_URL"
+          if [ -z "$URL" ]; then
+            # greenforce-project/clang-llvm reposunun son release'inden arsivi bul
+            URL=$(gh api repos/greenforce-project/clang-llvm/releases/latest \
+              --jq '[.assets[] | select(.name | test("\\.tar\\.(zst|gz|xz)$"))][0].browser_download_url')
+          fi
+          [ -n "$URL" ] || { echo "Clang linki bulunamadi, clang_url girin"; exit 1; }
+          echo "Clang: $URL"
+          case "$URL" in
+            *.zst) curl -fL "$URL" | tar --zstd -x -C "$HOME/greenforce-clang" ;;
+            *.xz)  curl -fL "$URL" | tar -xJ -C "$HOME/greenforce-clang" ;;
+            *)     curl -fL "$URL" | tar -xz -C "$HOME/greenforce-clang" ;;
+          esac
+          # arsiv icinde ust klasor varsa bin'i bul
+          CLANG_BIN=$(dirname "$(find "$HOME/greenforce-clang" -type f -name clang -path '*/bin/*' | head -n1)")
+          echo "$CLANG_BIN" >> "$GITHUB_PATH"
+          "$CLANG_BIN/clang" --version | head -n1
+
+      - name: KernelSU ekle
+        if: ${{ inputs.ksu != 'none' }}
+        working-directory: kernel
+        run: |
+          case "$KSU_CHOICE" in
+            KernelSU-Next)
+              curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s legacy
+              ;;
+            KernelSU-v0.9.5)
+              curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s v0.9.5
+              ;;
+            KernelSU-latest)
+              curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
+              ;;
+          esac
+          ls -la drivers | grep -i kernelsu || true
+
+      - name: Config hazirla (localversion + KSU)
+        working-directory: kernel
+        run: |
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 "$DEFCONFIG"
+
+          scripts/config --file out/.config \
+            --set-str LOCALVERSION "$LOCALVERSION_STR" \
+            --disable LOCALVERSION_AUTO
+
+          if [ "$KSU_CHOICE" != "none" ]; then
+            scripts/config --file out/.config \
+              -e KSU \
+              -e MODULES \
+              -e KPROBES \
+              -e HAVE_KPROBES \
+              -e KPROBE_EVENTS
+          fi
+
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
+          grep -E "CONFIG_LOCALVERSION|CONFIG_KSU|CONFIG_KPROBES" out/.config || true
+
+      - name: Kerneli derle
+        working-directory: kernel
+        run: |
+          make -j"$(nproc --all)" O=out ARCH=arm64 \
+            CC=clang LLVM=1 LLVM_IAS=1 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            2>&1 | tee build.log
+          ls -la out/arch/arm64/boot/
+
+      - name: Ciktilari topla
+        working-directory: kernel
+        run: |
+          mkdir -p ../output
+          cp out/arch/arm64/boot/Image* ../output/ 2>/dev/null || true
+          cp out/arch/arm64/boot/dtb* ../output/ 2>/dev/null || true
+          cp out/.config ../output/config
+          cp build.log ../output/
+
+          if [ -n "$AK3_REPO" ]; then
+            git clone --depth=1 -b "$AK3_BRANCH" "$AK3_REPO" ../AnyKernel3
+            cd ../AnyKernel3
+            for f in Image.gz-dtb Image.gz Image; do
+              if [ -f "../kernel/out/arch/arm64/boot/$f" ]; then
+                cp "../kernel/out/arch/arm64/boot/$f" .
+                break
+              fi
+            done
+            [ -f ../kernel/out/arch/arm64/boot/dtbo.img ] && cp ../kernel/out/arch/arm64/boot/dtbo.img . || true
+            ZIPNAME="Kernel${LOCALVERSION_STR}-$(date +%Y%m%d-%H%M).zip"
+            zip -r9 "../output/$ZIPNAME" . -x '*.git*' README.md
+          fi
+
+      - name: Artifact yukle
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-${{ github.run_number }}
+          path: output/
