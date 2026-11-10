@@ -79,7 +79,8 @@ jobs:
             bc bison flex libssl-dev libelf-dev libncurses-dev \
             build-essential ccache zip unzip zstd cpio lz4 \
             python3 curl git jq dwarves \
-            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
+            lld llvm
 
       - name: Kernel source'u cek
         run: |
@@ -107,6 +108,11 @@ jobs:
           CLANG_BIN=$(dirname "$(find "$HOME/greenforce-clang" -type f -name clang -path '*/bin/*' | head -n1)")
           echo "$CLANG_BIN" >> "$GITHUB_PATH"
           "$CLANG_BIN/clang" --version | head -n1
+          echo "Clang bin: $CLANG_BIN"
+          # Eksik LLVM araclarini goster (eksikse apt'ten gelen /usr/bin kopyalari kullanilir)
+          for t in ld.lld llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-strip; do
+            if [ -e "$CLANG_BIN/$t" ]; then echo "[clang] $t var"; else echo "[apt]   $t clang icinde yok, sistemdekini kullanacak"; fi
+          done
 
       - name: KernelSU ekle
         if: ${{ inputs.ksu != 'none' }}
