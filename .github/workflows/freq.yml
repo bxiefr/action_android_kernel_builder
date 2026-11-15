@@ -1,4 +1,4 @@
-name: OC Recon (CPU frekans tablosunu bul)
+name: OC Recon 2 (mt6768 tablo icerikleri)
 
 on:
   workflow_dispatch:
@@ -24,40 +24,52 @@ jobs:
       KERNEL_REPO: ${{ inputs.kernel_repo }}
       KERNEL_BRANCH: ${{ inputs.kernel_branch }}
     steps:
-      - name: Kernel'i cek (derleme yok, sadece arama)
+      - name: Kernel'i cek
         run: git clone --depth=1 -b "$KERNEL_BRANCH" "$KERNEL_REPO" kernel
 
-      - name: Frekans tablosu avi
+      - name: mt6768 tablolarini dokum al
         working-directory: kernel
         run: |
           mkdir -p ../out
+          D=drivers/misc/mediatek/base/power/cpufreq_v1/src/mach/mt6768
           {
-            echo "=== Defconfig adaylari ==="
-            find arch/arm64/configs -type f | grep -i -E 'selene|mt6768|6768' | sort
+            echo "##### selene.config #####"
+            cat arch/arm64/configs/vendor/selene.config
 
-            echo; echo "=== MTK cpufreq klasorleri ==="
-            find drivers/misc/mediatek drivers/cpufreq -maxdepth 7 -type d -ipath '*cpufreq*' | sort
+            echo; echo "##### mt6768_defconfig (cpu/dvfs/ppm/thermal ilgili) #####"
+            grep -nE 'CPU_FREQ|CPUFREQ|DVFS|HYBRID|PPM|EEM|THERMAL|SCHED|ENERGY|LOCALVERSION' arch/arm64/configs/vendor/mt6768_defconfig
 
-            echo; echo "=== Dosya adinda 6768 gecen cpufreq/ppm/eem dosyalari ==="
-            find drivers/misc/mediatek -type f \( -ipath '*cpufreq*' -o -ipath '*ppm*' -o -ipath '*eem*' -o -ipath '*thermal*' \) -ipath '*6768*' | sort
+            echo; echo "##### mtk_cpufreq_config.h (tamami) #####"
+            cat $D/mtk_cpufreq_config.h
 
-            echo; echo "=== CPU OPP tablosunda 2.0 GHz gecen satirlar (cpufreq/ppm) ==="
-            grep -rInE '\b(2000000|2000|2001000)\b' \
-              $(find drivers/misc/mediatek -type d \( -ipath '*cpufreq*' -o -ipath '*ppm*' \) ) \
-              --include=*.h --include=*.c 2>/dev/null | head -n 150
+            echo; echo "##### mtk_cpufreq_platform.c: varyant/segment secimi #####"
+            grep -nE 'segment|devinfo|efuse|CPU_LEVEL|opp_tbl_info|_FY|_6768|_v7|_G75|PRO|get_cpu_level|turbo|lv =' $D/mtk_cpufreq_platform.c | head -n 200
 
-            echo; echo "=== DTS'te 2000000000 / 2000000 (opp-hz, freq) ==="
-            grep -rInE '2000000000|opp-hz|clock-frequency' arch/arm64/boot/dts/mediatek/mt6768*.dts* 2>/dev/null | head -n 80
+            echo; echo "##### mtk_cpufreq_opp_table.h: yapi (define/static/#if) #####"
+            grep -nE '^#if|^#elif|^#else|^#endif|^static|^struct|^const|CPU_DVFS_FREQ0|CPU_DVFS_FREQ1_|VOLT0|VOLT1_' $D/mtk_cpufreq_opp_table.h | head -n 250
 
-            echo; echo "=== Hybrid DVFS / CSRAM (frekans tablosu firmware'de mi?) ==="
-            grep -rInE 'CONFIG_MTK_CPU_FREQ|CONFIG_MTK_CPUFREQ|HYBRID_CPU_DVFS|CPUHVFS|CSRAM' arch/arm64/configs 2>/dev/null | head -n 40
-            grep -rIlE 'cpuhvfs|csram' drivers/misc/mediatek 2>/dev/null | head -n 30
+            echo; echo "##### mtk_cpufreq_opp_table.h: ilk 120 satir #####"
+            sed -n '1,120p' $D/mtk_cpufreq_opp_table.h
 
-            echo; echo "=== Thermal limit/ PPM max freq ==="
-            grep -rInE 'cpu_max_freq|max_freq|PPM_.*MAX' drivers/misc/mediatek/base/power 2>/dev/null | head -n 60
-          } 2>&1 | tee ../out/recon.txt
+            echo; echo "##### mtk_cpufreq_opp_pv_table.h: ilk 80 satir #####"
+            sed -n '1,80p' $D/mtk_cpufreq_opp_pv_table.h
+
+            echo; echo "##### PPM mt6768: frekans/limit #####"
+            grep -rnE '2000|2001|max_freq|MAX_FREQ|freq' drivers/misc/mediatek/base/power/ppm_v3/src/mach/mt6768/*.c drivers/misc/mediatek/base/power/ppm_v3/src/mach/mt6768/*.h | head -n 80
+
+            echo; echo "##### freqhopping mt6768 (ARMPLL) #####"
+            grep -nEi 'armpll|2[0-9]{3}000|dds' drivers/misc/mediatek/freqhopping/mt6768/mtk_freqhopping.c | head -n 60
+
+            echo; echo "##### DTS: mt6768 dts dosyalari #####"
+            ls arch/arm64/boot/dts/mediatek | grep -E '6768|selene' 
+          } 2>&1 | tee ../out/recon2.txt
+
+          # tam dosyalari da artifact'e koy
+          cp $D/mtk_cpufreq_opp_table.h ../out/
+          cp $D/mtk_cpufreq_opp_pv_table.h ../out/
+          cp $D/mtk_cpufreq_platform.c ../out/
 
       - uses: actions/upload-artifact@v4
         with:
-          name: oc-recon
-          path: out/recon.txt
+          name: oc-recon2
+          path: out/
