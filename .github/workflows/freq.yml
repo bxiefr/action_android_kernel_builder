@@ -1,0 +1,63 @@
+name: OC Recon (CPU frekans tablosunu bul)
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_repo:
+        description: "Kernel repo"
+        required: true
+        default: "https://github.com/bxiefr/android_kernel_xiaomi_mt6768"
+        type: string
+      kernel_branch:
+        description: "Branch"
+        required: true
+        default: "lineage-24.0"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  recon:
+    runs-on: ubuntu-latest
+    env:
+      KERNEL_REPO: ${{ inputs.kernel_repo }}
+      KERNEL_BRANCH: ${{ inputs.kernel_branch }}
+    steps:
+      - name: Kernel'i cek (derleme yok, sadece arama)
+        run: git clone --depth=1 -b "$KERNEL_BRANCH" "$KERNEL_REPO" kernel
+
+      - name: Frekans tablosu avi
+        working-directory: kernel
+        run: |
+          mkdir -p ../out
+          {
+            echo "=== Defconfig adaylari ==="
+            find arch/arm64/configs -type f | grep -i -E 'selene|mt6768|6768' | sort
+
+            echo; echo "=== MTK cpufreq klasorleri ==="
+            find drivers/misc/mediatek drivers/cpufreq -maxdepth 7 -type d -ipath '*cpufreq*' | sort
+
+            echo; echo "=== Dosya adinda 6768 gecen cpufreq/ppm/eem dosyalari ==="
+            find drivers/misc/mediatek -type f \( -ipath '*cpufreq*' -o -ipath '*ppm*' -o -ipath '*eem*' -o -ipath '*thermal*' \) -ipath '*6768*' | sort
+
+            echo; echo "=== CPU OPP tablosunda 2.0 GHz gecen satirlar (cpufreq/ppm) ==="
+            grep -rInE '\b(2000000|2000|2001000)\b' \
+              $(find drivers/misc/mediatek -type d \( -ipath '*cpufreq*' -o -ipath '*ppm*' \) ) \
+              --include=*.h --include=*.c 2>/dev/null | head -n 150
+
+            echo; echo "=== DTS'te 2000000000 / 2000000 (opp-hz, freq) ==="
+            grep -rInE '2000000000|opp-hz|clock-frequency' arch/arm64/boot/dts/mediatek/mt6768*.dts* 2>/dev/null | head -n 80
+
+            echo; echo "=== Hybrid DVFS / CSRAM (frekans tablosu firmware'de mi?) ==="
+            grep -rInE 'CONFIG_MTK_CPU_FREQ|CONFIG_MTK_CPUFREQ|HYBRID_CPU_DVFS|CPUHVFS|CSRAM' arch/arm64/configs 2>/dev/null | head -n 40
+            grep -rIlE 'cpuhvfs|csram' drivers/misc/mediatek 2>/dev/null | head -n 30
+
+            echo; echo "=== Thermal limit/ PPM max freq ==="
+            grep -rInE 'cpu_max_freq|max_freq|PPM_.*MAX' drivers/misc/mediatek/base/power 2>/dev/null | head -n 60
+          } 2>&1 | tee ../out/recon.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: oc-recon
+          path: out/recon.txt
