@@ -16,6 +16,11 @@ on:
         description: "Defconfig (ör: vendor/xxx_defconfig)"
         required: true
         type: string
+      extra_config:
+        description: "Ek config fragment (ör: vendor/selene.config). Bos birakabilirsin"
+        required: false
+        default: ""
+        type: string
       localversion:
         description: "Localversion (ör: -Hawaii)"
         required: true
@@ -58,6 +63,7 @@ jobs:
       KERNEL_REPO: ${{ inputs.kernel_repo }}
       KERNEL_BRANCH: ${{ inputs.kernel_branch }}
       DEFCONFIG: ${{ inputs.defconfig }}
+      EXTRA_CONFIG: ${{ inputs.extra_config }}
       LOCALVERSION_STR: ${{ inputs.localversion }}
       KSU_CHOICE: ${{ inputs.ksu }}
       CLANG_URL: ${{ inputs.clang_url }}
@@ -134,7 +140,8 @@ jobs:
       - name: Config hazirla (localversion + KSU)
         working-directory: kernel
         run: |
-          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 "$DEFCONFIG"
+          # EXTRA_CONFIG doluysa (ör: vendor/selene.config) defconfig'in ustune birlestirilir
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 "$DEFCONFIG" $EXTRA_CONFIG
 
           scripts/config --file out/.config \
             --set-str LOCALVERSION "$LOCALVERSION_STR" \
