@@ -51,6 +51,11 @@ on:
         required: false
         default: "master"
         type: string
+      extra_outputs:
+        description: "Ek cikti (opsiyonel): bosluk ile ayir. 'modules' = modules_install + modules.tar.gz, digerleri DTB hedefi (ör: amlogic/sc2_s905x4_jaws.dtb modules)"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -69,6 +74,7 @@ jobs:
       CLANG_URL: ${{ inputs.clang_url }}
       AK3_REPO: ${{ inputs.anykernel_repo }}
       AK3_BRANCH: ${{ inputs.anykernel_branch }}
+      EXTRA_OUTPUTS: ${{ inputs.extra_outputs }}
       ARCH: arm64
       GH_TOKEN: ${{ github.token }}
 
@@ -83,7 +89,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             bc bison flex libssl-dev libelf-dev libncurses-dev \
-            build-essential ccache zip unzip zstd cpio lz4 \
+            build-essential ccache zip unzip zstd cpio lz4 kmod \
             python3 curl git jq dwarves \
             gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
             lld llvm
@@ -168,6 +174,33 @@ jobs:
             CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
             2>&1 | tee build.log
           ls -la out/arch/arm64/boot/
+
+      - name: Ek ciktilar (DTB / moduller)
+        if: ${{ inputs.extra_outputs != '' }}
+        working-directory: kernel
+        run: |
+          set -eo pipefail
+          MK=(make -j"$(nproc --all)" O=out ARCH=arm64
+              CC=clang LLVM=1 LLVM_IAS=1
+              CROSS_COMPILE=aarch64-linux-gnu-
+              CROSS_COMPILE_ARM32=arm-linux-gnueabi-)
+          mkdir -p ../output/dtbs
+          for item in $EXTRA_OUTPUTS; do
+            if [ "$item" = "modules" ]; then
+              rm -rf ../modout
+              "${MK[@]}" INSTALL_MOD_PATH="$PWD/../modout" INSTALL_MOD_STRIP=1 modules_install 2>&1 | tee -a build.log
+              tar -C ../modout -czf ../output/modules.tar.gz .
+              ls -la ../output/modules.tar.gz
+            else
+              "${MK[@]}" "$item" 2>&1 | tee -a build.log
+              name="$(basename "$item")"
+              # dts agaci kernel icinde ya da common_drivers altinda olabilir; out/ icinde ara
+              found="$(find out -name "$name" -type f | head -n1)"
+              [ -n "$found" ] || { echo "HATA: $name uretilmedi"; exit 1; }
+              cp "$found" ../output/dtbs/
+              echo "DTB: $found"
+            fi
+          done
 
       - name: Ciktilari topla
         working-directory: kernel
