@@ -52,7 +52,7 @@ on:
         default: "master"
         type: string
       extra_outputs:
-        description: "Ek cikti (opsiyonel): bosluk ile ayir. 'modules' = modules_install + modules.tar.gz, 'gpu'/'media' = kernel reposundaki build_ext_modules.sh ile harici moduller (extmods.tar.gz), digerleri DTB hedefi (ör: amlogic/sc2_s905x4_jaws.dtb modules gpu media)"
+        description: "Ek cikti (opsiyonel): bosluk ile ayir. 'modules' = modules_install + modules.tar.gz, 'gpu'/'media'/'bt'/'wifi' = kernel reposundaki build_ext_modules.sh ile harici moduller (extmods.tar.gz), digerleri DTB hedefi (ör: amlogic/sc2_s905x4_jaws.dtb modules gpu media bt wifi)"
         required: false
         default: ""
         type: string
@@ -187,7 +187,7 @@ jobs:
           mkdir -p ../output/dtbs
           EXT=()
           for item in $EXTRA_OUTPUTS; do
-            if [ "$item" = "gpu" ] || [ "$item" = "media" ]; then
+            if [ "$item" = "gpu" ] || [ "$item" = "media" ] || [ "$item" = "bt" ] || [ "$item" = "wifi" ]; then
               EXT+=("$item")
             elif [ "$item" = "modules" ]; then
               rm -rf ../modout
