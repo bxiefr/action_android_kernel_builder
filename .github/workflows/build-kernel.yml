@@ -52,7 +52,7 @@ on:
         default: "master"
         type: string
       extra_outputs:
-        description: "Ek cikti (opsiyonel): bosluk ile ayir. 'modules' = modules_install + modules.tar.gz, digerleri DTB hedefi (ör: amlogic/sc2_s905x4_jaws.dtb modules)"
+        description: "Ek cikti (opsiyonel): bosluk ile ayir. 'modules' = modules_install + modules.tar.gz, 'gpu'/'media' = kernel reposundaki build_ext_modules.sh ile harici moduller (extmods.tar.gz), digerleri DTB hedefi (ör: amlogic/sc2_s905x4_jaws.dtb modules gpu media)"
         required: false
         default: ""
         type: string
@@ -185,8 +185,11 @@ jobs:
               CROSS_COMPILE=aarch64-linux-gnu-
               CROSS_COMPILE_ARM32=arm-linux-gnueabi-)
           mkdir -p ../output/dtbs
+          EXT=()
           for item in $EXTRA_OUTPUTS; do
-            if [ "$item" = "modules" ]; then
+            if [ "$item" = "gpu" ] || [ "$item" = "media" ]; then
+              EXT+=("$item")
+            elif [ "$item" = "modules" ]; then
               rm -rf ../modout
               "${MK[@]}" INSTALL_MOD_PATH="$PWD/../modout" INSTALL_MOD_STRIP=1 modules_install 2>&1 | tee -a build.log
               tar -C ../modout -czf ../output/modules.tar.gz .
@@ -201,6 +204,14 @@ jobs:
               echo "DTB: $found"
             fi
           done
+          if [ "${#EXT[@]}" -gt 0 ]; then
+            # harici moduller: kernel'in kendi 'modules' ciktisi (Module.symvers) gerekir; derleme adiminda uretildi
+            OUT=out DEST="$PWD/../extmod_out" CC=clang LLVM=1 LLVM_IAS=1 \
+              CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+              bash ./build_ext_modules.sh "${EXT[@]}" 2>&1 | tee -a build.log
+            tar -C ../extmod_out -czf ../output/extmods.tar.gz .
+            ls -la ../output/extmods.tar.gz
+          fi
 
       - name: Ciktilari topla
         working-directory: kernel
